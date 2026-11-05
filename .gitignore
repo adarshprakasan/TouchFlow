@@ -10,3 +10,7 @@ dist/
 .vscode/
 .DS_Store
 Thumbs.db
+
+*.spec
+smoke*.json
+release-staging/

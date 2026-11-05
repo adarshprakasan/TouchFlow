@@ -1,11 +1,12 @@
 """TouchFlow Windows companion. Python 3.12+, standard library only."""
 import ctypes as C
 from ctypes import wintypes as W
-import http.server, json, secrets, socket, threading, time, queue
+import http.server, json, secrets, socket, threading, time, queue, sys, math
 import tkinter as tk
 from tkinter import messagebox
 from pathlib import Path
 
+VERSION = "0.1.0"
 PORT = 8765
 ROOT = Path(__file__).resolve().parent
 jobs = queue.Queue(maxsize=512)
@@ -63,22 +64,30 @@ def command(body):
 def validate(b):
     k=b.get('kind')
     if k=='move':
-        return all(type(b.get(n)) in (int,float) and abs(b[n])<=500 for n in ('x','y'))
-    if k=='scroll': return type(b.get('y')) in (int,float) and abs(b['y'])<=1200
+        return all(type(b.get(n)) in (int,float) and math.isfinite(b[n]) and abs(b[n])<=500 for n in ('x','y'))
+    if k=='scroll': return type(b.get('y')) in (int,float) and math.isfinite(b['y']) and abs(b['y'])<=1200
     if k=='click': return b.get('button') in ('left','right')
     if k=='drag': return type(b.get('down')) is bool
-    if k=='text': return isinstance(b.get('text'),str) and 0<len(b['text'])<=256
+    if k=='text': return isinstance(b.get('text'),str) and 0<len(b['text'])<=256 and not any(0xD800<=ord(c)<=0xDFFF for c in b['text'])
     if k=='key': return b.get('key') in ('Enter','Backspace','Tab','Escape','ArrowLeft','ArrowRight','ArrowUp','ArrowDown')
     return k in ('release','heartbeat')
 
 class Handler(http.server.BaseHTTPRequestHandler):
     protocol_version='HTTP/1.1'
+    def setup(self):
+        super().setup()
+        self.connection.settimeout(5)
+    def valid_host(self):
+        host=self.headers.get('Host','')
+        return host in {f'{ip}:{PORT}' for ip in addresses()+['127.0.0.1','localhost']}
+
     def log_message(self,*args): pass
     def reply(self,status,data):
         raw=json.dumps(data).encode(); self.send_response(status)
         self.send_header('Content-Type','application/json'); self.send_header('Content-Length',str(len(raw)))
         self.send_header('Cache-Control','no-store'); self.send_header('X-Content-Type-Options','nosniff'); self.end_headers(); self.wfile.write(raw)
     def do_GET(self):
+        if not self.valid_host(): return self.reply(403,{'error':'Host rejected'})
         if self.path not in ('/','/phone.html'): return self.reply(404,{'error':'Not found'})
         raw=(ROOT/'phone.html').read_bytes(); self.send_response(200)
         self.send_header('Content-Type','text/html; charset=utf-8'); self.send_header('Content-Length',str(len(raw)))
@@ -86,6 +95,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.send_header('Content-Security-Policy',"default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'")
         self.end_headers(); self.wfile.write(raw)
     def do_POST(self):
+        if not self.valid_host(): return self.reply(403,{'error':'Host rejected'})
         # No CORS. Require a same-origin browser request and JSON to block cross-site forms.
         if self.headers.get('Origin') != 'http://'+self.headers.get('Host',''):
             return self.reply(403,{'error':'Origin rejected'})
@@ -104,27 +114,31 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 if len(recent)>=5: return self.reply(429,{'error':'Too many pairing attempts. Wait one minute.'})
                 recent.append(now); attempts[ip]=recent
                 if state['token'] or state['pending']: return self.reply(409,{'error':'Another phone is connected or awaiting approval'})
-                if now>state['expires'] or not secrets.compare_digest(str(b.get('code','')).upper(),state['code']):
+                if now>state['expires'] or not secrets.compare_digest(str(b.get('code','')).upper().encode('utf-8'),state['code'].encode('ascii')):
                     return self.reply(403,{'error':'Code is incorrect or expired. Generate a new one on the computer.'})
                 ticket=secrets.token_urlsafe(32)
                 state['pending']={'ticket':ticket,'ip':self.client_address[0],'time':now,'approved':False}
                 return self.reply(200,{'ticket':ticket})
             if self.path=='/status':
                 pending=state['pending']
-                if not pending or not secrets.compare_digest(str(b.get('ticket','')),pending['ticket']): return self.reply(403,{'error':'Pairing was rejected or expired'})
+                if not pending or not secrets.compare_digest(str(b.get('ticket','')).encode('utf-8'),pending['ticket'].encode('ascii')): return self.reply(403,{'error':'Pairing was rejected or expired'})
                 if pending['approved']:
                     token=state['token']; state['pending']=None
                     return self.reply(200,{'token':token})
                 return self.reply(200,{'waiting':True})
             token=str(b.get('token',''))
-            if not state['token'] or not secrets.compare_digest(token,state['token']): return self.reply(401,{'error':'Disconnected. Pair again.'})
+            if not state['token'] or not secrets.compare_digest(token.encode('utf-8'),state['token'].encode('ascii')): return self.reply(401,{'error':'Disconnected. Pair again.'})
             if self.path=='/disconnect':
-                state['token']=None; jobs.put_nowait(('release',None)); return self.reply(200,{'ok':True})
+                state['token']=None
+                try: jobs.put_nowait(('release',None))
+                except queue.Full: pass
+                return self.reply(200,{'ok':True})
             if self.path!='/input': return self.reply(404,{'error':'Not found'})
-            if state['paused']: return self.reply(423,{'error':'Input is paused on the computer'})
             seq=b.get('seq')
             if type(seq) is not int or seq<=state['seq'] or not validate(b): return self.reply(400,{'error':'Invalid command'})
-            state['seq']=seq; state['last']=now
+            state['last']=now
+            if state['paused'] and b['kind'] not in ('heartbeat','release'): return self.reply(423,{'error':'Input is paused on the computer'})
+            state['seq']=seq
             if b['kind']!='heartbeat':
                 try: jobs.put_nowait(('input',(token,b)))
                 except queue.Full: return self.reply(429,{'error':'Too many commands'})
@@ -142,68 +156,88 @@ def addresses():
     except OSError: pass
     return sorted(found)
 
-root=tk.Tk(); root.title('TouchFlow Windows Companion'); root.geometry('570x510'); root.configure(bg='#101a24')
-def label(text,size=12,color='#edf4f3'):
-    w=tk.Label(root,text=text,font=('Segoe UI',size),fg=color,bg='#101a24',wraplength=530,justify='left'); w.pack(anchor='w',padx=22,pady=7); return w
-label('TouchFlow',26); label('Windows companion • trusted private Wi-Fi only',11,'#80e1d1')
-label('On your phone, open one of these addresses:')
-url=label('\n'.join(f'http://{ip}:{PORT}' for ip in addresses()) or 'No network address found. Connect to Wi-Fi.',12,'#80e1d1')
-code=label('Pairing code: '+state['code'],20)
-status=label('Waiting for a phone. Codes expire after 2 minutes.',11)
-frame=tk.Frame(root,bg='#101a24'); frame.pack(fill='x',padx=22,pady=10)
-def revoke():
-    with lock:
-        state['token']=None; state['pending']=None; state['seq']=0
-    release(); status.configure(text='Disconnected. Generate a new pairing code.')
-def new_code():
-    revoke()
-    with lock: state['code']=secrets.token_hex(4).upper(); state['expires']=time.monotonic()+120
-    code.configure(text='Pairing code: '+state['code']); status.configure(text='Waiting for a phone. Code expires in 2 minutes.')
-def pause():
-    with lock: state['paused']=not state['paused']; paused=state['paused']
-    release(); pause_btn.configure(text='Resume' if paused else 'Pause input'); status.configure(text='Input paused' if paused else 'Input resumed')
-for text,fn in [('New pairing code',new_code),('Disconnect phone',revoke)]: tk.Button(frame,text=text,command=fn,padx=10,pady=8).pack(side='left',padx=(0,8))
-pause_btn=tk.Button(frame,text='Pause input',command=pause,padx=10,pady=8); pause_btn.pack(side='left')
-label('Keep this window open. Close it to stop remote control. Input cannot reach administrator apps or Windows security screens.',10,'#9aadb3')
-server=None
-try:
-    server=Server(('0.0.0.0',PORT),Handler)
-    threading.Thread(target=server.serve_forever,daemon=True).start()
-except OSError as e:
-    messagebox.showerror('TouchFlow cannot start',str(e)); root.destroy(); raise SystemExit(1)
-asked=None
+def main():
+    root=tk.Tk(); root.title('TouchFlow Windows Companion'); root.geometry('610x570'); root.minsize(610,570); root.configure(bg='#101a24')
+    def label(text,size=12,color='#edf4f3'):
+        w=tk.Label(root,text=text,font=('Segoe UI',size),fg=color,bg='#101a24',wraplength=530,justify='left'); w.pack(anchor='w',padx=22,pady=7); return w
+    label('TouchFlow '+VERSION+' alpha',26); label('Windows companion - trusted private Wi-Fi only',11,'#80e1d1')
+    label('On your phone, open one of these addresses:')
+    url=label('\n'.join(f'http://{ip}:{PORT}' for ip in addresses()) or 'No network address found. Connect to Wi-Fi.',12,'#80e1d1')
+    code=label('Pairing code: '+state['code'],20)
+    status=label('Waiting for a phone. Codes expire after 2 minutes.',11)
+    frame=tk.Frame(root,bg='#101a24'); frame.pack(fill='x',padx=22,pady=10)
+    def clear_queue():
+        while True:
+            try: jobs.get_nowait()
+            except queue.Empty: break
 
-def tick():
-    global asked
-    now=time.monotonic()
-    with lock:
-        pending=state['pending']
-        if pending and now-pending['time']>60: state['pending']=None; pending=None
-        if state['token'] and now-state['last']>8:
-            state['token']=None; release(); status.configure(text='Phone timed out. Pair again.')
-    if pending and not pending['approved'] and asked!=pending['ticket']:
-        asked=pending['ticket']
-        approved=messagebox.askyesno('Approve phone?',f"Allow phone at {pending['ip']} to control this computer?\n\nApprove only your own phone.")
+    def revoke():
         with lock:
-            if state['pending'] is pending:
-                if approved:
-                    pending['approved']=True; state['token']=secrets.token_urlsafe(32); state['last']=time.monotonic(); state['seq']=0
-                    status.configure(text='Phone connected — input enabled')
-                else: state['pending']=None
-    for _ in range(64):
-        try: kind,payload=jobs.get_nowait()
-        except queue.Empty: break
-        try:
-            if kind=='release': release()
-            else:
-                token,b=payload
-                with lock: allowed=token==state['token'] and not state['paused']
-                if allowed: command(b)
-        except Exception as e: status.configure(text=str(e)); revoke()
-    root.after(15,tick)
+            state['token']=None; state['pending']=None; state['seq']=0
+        clear_queue(); release(); status.configure(text='Disconnected. Generate a new pairing code.')
+    def new_code():
+        revoke()
+        with lock: state['code']=secrets.token_hex(4).upper(); state['expires']=time.monotonic()+120
+        code.configure(text='Pairing code: '+state['code']); status.configure(text='Waiting for a phone. Code expires in 2 minutes.')
+    def pause():
+        with lock: state['paused']=not state['paused']; paused=state['paused']
+        clear_queue(); release(); pause_btn.configure(text='Resume' if paused else 'Pause input'); status.configure(text='Input paused' if paused else 'Input resumed')
+    for text,fn in [('New pairing code',new_code),('Disconnect phone',revoke)]: tk.Button(frame,text=text,command=fn,padx=10,pady=8).pack(side='left',padx=(0,8))
+    pause_btn=tk.Button(frame,text='Pause input',command=pause,padx=10,pady=8); pause_btn.pack(side='left')
+    label('Keep this window open. Close it to stop remote control. Input cannot reach administrator apps or Windows security screens.',10,'#9aadb3')
+    server=None
+    try:
+        server=Server(('0.0.0.0',PORT),Handler)
+        threading.Thread(target=server.serve_forever,daemon=True).start()
+    except OSError as e:
+        messagebox.showerror('TouchFlow cannot start',str(e)); root.destroy(); raise SystemExit(1)
+    asked=None
 
-def close():
-    revoke()
-    if server: threading.Thread(target=server.shutdown,daemon=True).start()
-    root.destroy()
-root.protocol('WM_DELETE_WINDOW',close); root.after(50,tick); root.mainloop()
+    def tick():
+        nonlocal asked
+        now=time.monotonic()
+        with lock:
+            pending=state['pending']
+            if pending and now-pending['time']>60: state['pending']=None; pending=None
+            if not state['token'] and held: release()
+            if state['token'] and now-state['last']>8:
+                state['token']=None; state['pending']=None; clear_queue(); release(); status.configure(text='Phone timed out. Pair again.')
+        if pending and not pending['approved'] and asked!=pending['ticket']:
+            asked=pending['ticket']
+            approved=messagebox.askyesno('Approve phone?',f"Allow phone at {pending['ip']} to control this computer?\n\nApprove only your own phone.")
+            with lock:
+                if state['pending'] is pending:
+                    if approved:
+                        pending['approved']=True; state['token']=secrets.token_urlsafe(32); state['last']=time.monotonic(); state['seq']=0
+                        status.configure(text='Phone connected - input enabled')
+                    else: state['pending']=None
+        for _ in range(64):
+            try: kind,payload=jobs.get_nowait()
+            except queue.Empty: break
+            try:
+                if kind=='release': release()
+                else:
+                    token,b=payload
+                    with lock: allowed=token==state['token'] and (not state['paused'] or b['kind']=='release')
+                    if allowed: command(b)
+            except Exception as e: status.configure(text=str(e)); revoke()
+        root.after(15,tick)
+
+    def close():
+        revoke()
+        if server: threading.Thread(target=server.shutdown,daemon=True).start()
+        root.destroy()
+    root.protocol('WM_DELETE_WINDOW',close); root.after(50,tick); root.mainloop()
+
+if __name__ == '__main__':
+    if len(sys.argv)==3 and sys.argv[1]=='--self-test':
+        result={'version':VERSION,'input_structure_bytes':C.sizeof(INPUT),'bundled_phone':(ROOT/'phone.html').is_file()}
+        assert result['input_structure_bytes']==(40 if C.sizeof(C.c_void_p)==8 else 28)
+        assert result['bundled_phone']
+        assert validate({'kind':'move','x':2,'y':-1})
+        assert not validate({'kind':'move','x':float('nan'),'y':0})
+        window=tk.Tk(); window.withdraw(); window.update(); window.destroy()
+        result['tkinter']='passed'; result['status']='passed'
+        Path(sys.argv[2]).write_text(json.dumps(result,indent=2))
+    else:
+        main()
