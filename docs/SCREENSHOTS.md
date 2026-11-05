@@ -6,7 +6,7 @@ Captured from the running 0.2.1 app in an isolated local review instance. The co
 
 QR connection link, address selection, pairing code and desktop pause/disconnect controls.
 
-![TouchFlow Windows companion with QR code and example pairing details](screenshots/windows-companion.png)
+![TouchFlow Windows companion with QR code and example pairing details](screenshots/windows-companion.jpg)
 
 ## Phone controls
 

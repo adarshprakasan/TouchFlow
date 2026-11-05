@@ -23,7 +23,7 @@ Keep the companion window open. Close it to stop the service. The executable is 
 
 ## Screenshots
 
-![Windows companion with example pairing details](docs/screenshots/windows-companion.png)
+![Windows companion with example pairing details](docs/screenshots/windows-companion.jpg)
 
 [Phone controller and pause-state screenshots](docs/SCREENSHOTS.md). Screenshots use an isolated review instance with example connection details.
 
