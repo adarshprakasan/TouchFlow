@@ -11,3 +11,5 @@ The standalone root visual prototype loads DM Sans, DM Mono and Manrope through 
 Build dependencies may carry additional licenses. They are used to produce the executable and are not all included as application runtime components. No claim of endorsement by any upstream project is made.
 
 OpenSSL and zlib runtime license texts are also included in `licenses/`. CPython distribution notices cover additional incorporated components, including libffi.
+
+Version 0.2.0 includes qrcode 8.2 (BSD license) for QR generation and its Windows dependency colorama 0.4.6 (BSD license). Their upstream license texts are included with the source under `licenses/` and in each portable release. No QR generation service is contacted.

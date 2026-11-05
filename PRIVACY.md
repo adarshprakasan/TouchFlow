@@ -9,3 +9,5 @@ The connection is plain HTTP and is not encrypted. People able to intercept loca
 The root visual prototype references Google Fonts. Opening that separate prototype can contact Google. The working `companion/phone.html` interface has no external font, script or analytics requests.
 
 GitHub downloads, issues and repository pages are governed by GitHub's own policies.
+
+QR codes are generated entirely on the PC using the displayed local URL; they contain no pairing code or session token and do not use an external QR service. Approved sessions remain in memory until manually disconnected or the companion closes; inactivity no longer deletes them. Temporary network recovery preserves the in-memory authorization but does not replay buffered input. Reloading/closing the phone page loses its in-memory token.

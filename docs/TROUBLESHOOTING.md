@@ -10,11 +10,14 @@
 | Incorrect or expired code | Click New pairing code on the PC and enter the new eight-character code. |
 | Too many pairing attempts | Wait one minute before trying again. |
 | Another phone is connected | Disconnect phone on the PC, generate a new code and pair again. |
-| Phone is disconnected after locking | Mobile browsers can suspend network work. Return to the page and pair again. |
+| Phone locks or network briefly drops | Return to the same open tab. It retries automatically; the approved session does not expire. Reloaded/closed tabs require desktop Disconnect and pairing again. |
+| QR opens the wrong address | Choose the actual Wi-Fi adapter in the companion dropdown and scan its updated QR. Do not use a VM/VPN address. |
+| Text selected in the mobile pad | Install 0.2.0 or newer, reopen the phone link and ensure you are using the companion-served controller. Tap then tap-and-hold to drag. Text fields remain selectable. |
+| Tab/window does not drag | Move the PC pointer over its tab/title bar, tap then tap again within 350 ms, hold and move, then lift. Or use Drag on/off. |
 | Pointer does not move | Resume input on the PC; check connection state; the app cannot control elevated programs or security screens. |
 | Text goes to the wrong place | Text targets the active PC window and its focused field. Select the intended field before tapping Send text. |
 | Text behaves differently in a specific app | Unicode input support depends on the destination app. Report the app name and a non-sensitive example. |
-| Source launcher flashes or says Python not found | Install Python 3.12+ with Tk support or use the portable Windows release. |
+| Source launcher flashes or says Python not found | Install Python 3.12+ with Tk support and run `py -3 -m pip install -r requirements.txt`, or use the portable Windows release. |
 | Executable warning | The alpha build is unsigned. Review the release and checksum; do not bypass security controls you do not understand. |
 
 For bug reports, include Windows version, TouchFlow version, phone OS/browser, steps and a non-sensitive error message. Never include pairing codes, session tokens, private typed text or screenshots containing them.

@@ -1,10 +1,10 @@
-param([string]$Version = '0.1.0')
+param([string]$Version = '0.2.0')
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
 Set-Location -LiteralPath $projectRoot
 $pythonExe = Join-Path $projectRoot '.venv\Scripts\python.exe'
 if (-not (Test-Path -LiteralPath $pythonExe)) { throw 'Create .venv and install requirements-build.txt first.' }
-& $pythonExe -m PyInstaller --noconfirm --clean --onefile --windowed --name TouchFlow --add-data 'companion/phone.html:.' companion/touchflow.py
+& $pythonExe -m PyInstaller --noconfirm --clean --onefile --windowed --name TouchFlow --add-data 'companion/phone.html:.' --add-data 'companion/gestures.js:.' companion/touchflow.py
 if ($LASTEXITCODE -ne 0) { throw 'PyInstaller build failed.' }
 $packageName = "TouchFlow-$Version-windows-x64"
 $buildId = [guid]::NewGuid().ToString("N")
@@ -23,6 +23,11 @@ Copy-Item -LiteralPath (Join-Path $pythonBase 'tcl\tk8.6\license.terms') -Destin
 Get-ChildItem -LiteralPath 'licenses' -File | Copy-Item -Destination $licenseDir
 $pyiLicense = & $pythonExe -c 'import importlib.metadata; d=importlib.metadata.distribution("pyinstaller"); print(next(d.locate_file(f) for f in d.files if str(f).endswith("COPYING.txt")))'
 Copy-Item -LiteralPath $pyiLicense -Destination (Join-Path $licenseDir 'PyInstaller-COPYING.txt')
+foreach ($dependency in @('qrcode','colorama')) {
+    $dependencyLicense = & $pythonExe -c "import importlib.metadata; d=importlib.metadata.distribution('$dependency'); print(next(d.locate_file(f) for f in d.files if 'LICENSE' in str(f).upper() or str(f).upper().endswith('LICENCE')))"
+    if ($LASTEXITCODE -ne 0) { throw "Missing license for $dependency" }
+    Copy-Item -LiteralPath $dependencyLicense -Destination (Join-Path $licenseDir "$dependency-LICENSE.txt")
+}
 $zipPath = Join-Path $projectRoot "dist\$packageName.zip"
 Compress-Archive -Path $stagePath -DestinationPath $zipPath -Force
 $hash = (Get-FileHash -LiteralPath $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()

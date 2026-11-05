@@ -5,6 +5,7 @@ from pathlib import Path
 import threading
 import time
 import unittest
+from unittest.mock import patch
 import urllib.request
 import urllib.error
 
@@ -26,6 +27,44 @@ class Validation(unittest.TestCase):
         self.assertFalse(app.validate({'kind':'key','key':'RunAnything'}))
         self.assertFalse(app.validate({'kind':'shell','command':'ignored'}))
         self.assertTrue(app.validate({'kind':'release'}))
+
+class ConnectionAndQR(unittest.TestCase):
+    def test_idle_session_never_expires(self):
+        app.state.update(token='still-approved',last=1,pending=None)
+        with patch.object(app,'release') as release:
+            self.assertTrue(app.connection_safety(now=60*60*24*365))
+            release.assert_called_once()
+        self.assertEqual(app.state['token'],'still-approved')
+    def test_safety_drops_stale_drag_without_disconnect(self):
+        app.state.update(token='still-approved',last=1,pending=None)
+        app.jobs.put(('input',('still-approved',{'kind':'drag','down':True})))
+        with patch.object(app,'release') as release:
+            app.connection_safety(now=20)
+            release.assert_called_once()
+        self.assertTrue(app.jobs.empty())
+        self.assertEqual(app.state['token'],'still-approved')
+    def test_recent_connection_keeps_commands(self):
+        app.state.update(token='still-approved',last=15,pending=None)
+        app.jobs.put(('input',('still-approved',{'kind':'move','x':1,'y':2})))
+        with patch.object(app,'release') as release:
+            self.assertFalse(app.connection_safety(now=16));release.assert_not_called()
+        self.assertEqual(app.jobs.get_nowait()[1][1]['kind'],'move')
+    def test_pairing_approval_expiry_is_separate(self):
+        app.state.update(token='still-approved',last=100,pending={'time':0})
+        with patch.object(app,'release'): app.connection_safety(now=100)
+        self.assertIsNone(app.state['pending'])
+        self.assertEqual(app.state['token'],'still-approved')
+    def test_qr_contains_only_phone_url(self):
+        with patch.object(app.qrcode,'QRCode',wraps=app.qrcode.QRCode) as factory:
+            matrix=app.qr_matrix('192.0.2.10')
+            self.assertGreater(len(matrix),20)
+            self.assertEqual(len(matrix),len(matrix[0]))
+            self.assertEqual(app.phone_url('192.0.2.10'),f'http://192.0.2.10:{app.PORT}')
+            self.assertTrue(all(not any(row) for row in matrix[:4]))
+            # Verify the encoder receives only the URL, never a secret/code.
+        with patch.object(app.qrcode,'QRCode') as factory:
+            app.qr_matrix('192.0.2.10')
+            factory.return_value.add_data.assert_called_once_with(app.phone_url('192.0.2.10'))
 
 class Protocol(unittest.TestCase):
     @classmethod

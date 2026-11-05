@@ -1,12 +1,13 @@
-"""TouchFlow Windows companion. Python 3.12+, standard library only."""
+"""TouchFlow Windows companion. Python 3.12+ with qrcode."""
 import ctypes as C
 from ctypes import wintypes as W
 import http.server, json, secrets, socket, threading, time, queue, sys, math
 import tkinter as tk
-from tkinter import messagebox
+from tkinter import messagebox, ttk
+import qrcode
 from pathlib import Path
 
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 PORT = 8765
 ROOT = Path(__file__).resolve().parent
 jobs = queue.Queue(maxsize=512)
@@ -88,11 +89,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.send_header('Cache-Control','no-store'); self.send_header('X-Content-Type-Options','nosniff'); self.end_headers(); self.wfile.write(raw)
     def do_GET(self):
         if not self.valid_host(): return self.reply(403,{'error':'Host rejected'})
-        if self.path not in ('/','/phone.html'): return self.reply(404,{'error':'Not found'})
-        raw=(ROOT/'phone.html').read_bytes(); self.send_response(200)
-        self.send_header('Content-Type','text/html; charset=utf-8'); self.send_header('Content-Length',str(len(raw)))
+        assets={'/':('phone.html','text/html; charset=utf-8'),'/phone.html':('phone.html','text/html; charset=utf-8'),'/gestures.js':('gestures.js','text/javascript; charset=utf-8')}
+        if self.path not in assets: return self.reply(404,{'error':'Not found'})
+        name,content_type=assets[self.path]
+        raw=(ROOT/name).read_bytes(); self.send_response(200)
+        self.send_header('Content-Type',content_type); self.send_header('Content-Length',str(len(raw)))
         self.send_header('Cache-Control','no-store'); self.send_header('X-Frame-Options','DENY')
-        self.send_header('Content-Security-Policy',"default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'")
+        self.send_header('Content-Security-Policy',"default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'")
         self.end_headers(); self.wfile.write(raw)
     def do_POST(self):
         if not self.valid_host(): return self.reply(403,{'error':'Host rejected'})
@@ -156,13 +159,61 @@ def addresses():
     except OSError: pass
     return sorted(found)
 
+def connection_safety(now=None):
+    """Release stale held input without expiring the approved session."""
+    now=time.monotonic() if now is None else now
+    with lock:
+        if state['pending'] and now-state['pending']['time']>60:
+            state['pending']=None
+        stale=not state['token'] or now-state['last']>8
+    if stale:
+        while True:
+            try: jobs.get_nowait()
+            except queue.Empty: break
+        release()
+    return stale
+
+def phone_url(address):
+    return f'http://{address}:{PORT}'
+
+def qr_matrix(address):
+    code=qrcode.QRCode(error_correction=qrcode.constants.ERROR_CORRECT_M,border=4)
+    code.add_data(phone_url(address)); code.make(fit=True)
+    return code.get_matrix()
+
+def qr_image(master,address):
+    matrix=qr_matrix(address)
+    scale=max(1,220//len(matrix)); width=len(matrix)*scale
+    # Native Tk PPM image: no Pillow dependency and no external QR service.
+    pixels=bytearray()
+    for row in matrix:
+        line=b''.join((b'\x00\x00\x00' if dark else b'\xff\xff\xff')*scale for dark in row)
+        pixels.extend(line*scale)
+    return tk.PhotoImage(master=master,data=f'P6\n{width} {width}\n255\n'.encode()+pixels,format='PPM')
+
 def main():
-    root=tk.Tk(); root.title('TouchFlow Windows Companion'); root.geometry('610x570'); root.minsize(610,570); root.configure(bg='#101a24')
+    root=tk.Tk(); root.title('TouchFlow Windows Companion'); root.geometry('680x640'); root.minsize(650,640); root.configure(bg='#101a24')
     def label(text,size=12,color='#edf4f3'):
         w=tk.Label(root,text=text,font=('Segoe UI',size),fg=color,bg='#101a24',wraplength=530,justify='left'); w.pack(anchor='w',padx=22,pady=7); return w
     label('TouchFlow '+VERSION+' alpha',26); label('Windows companion - trusted private Wi-Fi only',11,'#80e1d1')
-    label('On your phone, open one of these addresses:')
-    url=label('\n'.join(f'http://{ip}:{PORT}' for ip in addresses()) or 'No network address found. Connect to Wi-Fi.',12,'#80e1d1')
+    label('Scan the QR code with your phone camera, then open the link.',11)
+    network=tk.Frame(root,bg='#101a24'); network.pack(fill='x',padx=22,pady=8)
+    details=tk.Frame(network,bg='#101a24'); details.pack(side='left',fill='both',expand=True,padx=(0,12))
+    tk.Label(details,text='Choose your Wi-Fi address',bg='#101a24',fg='#edf4f3',font=('Segoe UI',11)).pack(anchor='w',pady=8)
+    ips=addresses()
+    selected=tk.StringVar(value=ips[0] if ips else '')
+    choices=ttk.Combobox(details,textvariable=selected,values=ips,state='readonly',width=26)
+    choices.pack(anchor='w',fill='x')
+    url=tk.Label(details,text='',bg='#101a24',fg='#80e1d1',wraplength=330,font=('Segoe UI',12)); url.pack(anchor='w',pady=12)
+    tk.Label(details,text='QR opens the local phone controls.\nEnter the pairing code and approve\nyour phone on this PC.',justify='left',bg='#101a24',fg='#9aadb3',font=('Segoe UI',10)).pack(anchor='w')
+    qr_label=tk.Label(network,bg='white',padx=0,pady=0); qr_label.pack(side='right')
+    def refresh_qr(_event=None):
+        if selected.get():
+            url.configure(text=phone_url(selected.get()))
+            image=qr_image(root,selected.get()); qr_label.configure(image=image); qr_label.image=image
+        else: url.configure(text='No network address found. Connect to Wi-Fi and restart TouchFlow.')
+    choices.bind('<<ComboboxSelected>>',refresh_qr)
+    refresh_qr()
     code=label('Pairing code: '+state['code'],20)
     status=label('Waiting for a phone. Codes expire after 2 minutes.',11)
     frame=tk.Frame(root,bg='#101a24'); frame.pack(fill='x',padx=22,pady=10)
@@ -184,7 +235,7 @@ def main():
         clear_queue(); release(); pause_btn.configure(text='Resume' if paused else 'Pause input'); status.configure(text='Input paused' if paused else 'Input resumed')
     for text,fn in [('New pairing code',new_code),('Disconnect phone',revoke)]: tk.Button(frame,text=text,command=fn,padx=10,pady=8).pack(side='left',padx=(0,8))
     pause_btn=tk.Button(frame,text='Pause input',command=pause,padx=10,pady=8); pause_btn.pack(side='left')
-    label('Keep this window open. Close it to stop remote control. Input cannot reach administrator apps or Windows security screens.',10,'#9aadb3')
+    label('No session time limit. Pause or Disconnect to stop input; close this window to end the session. Trusted private Wi-Fi only. Elevated apps and security screens are unsupported.',10,'#9aadb3')
     server=None
     try:
         server=Server(('0.0.0.0',PORT),Handler)
@@ -195,13 +246,8 @@ def main():
 
     def tick():
         nonlocal asked
-        now=time.monotonic()
-        with lock:
-            pending=state['pending']
-            if pending and now-pending['time']>60: state['pending']=None; pending=None
-            if not state['token'] and held: release()
-            if state['token'] and now-state['last']>8:
-                state['token']=None; state['pending']=None; clear_queue(); release(); status.configure(text='Phone timed out. Pair again.')
+        connection_safety()
+        with lock: pending=state['pending']
         if pending and not pending['approved'] and asked!=pending['ticket']:
             asked=pending['ticket']
             approved=messagebox.askyesno('Approve phone?',f"Allow phone at {pending['ip']} to control this computer?\n\nApprove only your own phone.")
@@ -234,9 +280,11 @@ if __name__ == '__main__':
         result={'version':VERSION,'input_structure_bytes':C.sizeof(INPUT),'bundled_phone':(ROOT/'phone.html').is_file()}
         assert result['input_structure_bytes']==(40 if C.sizeof(C.c_void_p)==8 else 28)
         assert result['bundled_phone']
+        assert (ROOT/'gestures.js').is_file()
         assert validate({'kind':'move','x':2,'y':-1})
         assert not validate({'kind':'move','x':float('nan'),'y':0})
-        window=tk.Tk(); window.withdraw(); window.update(); window.destroy()
+        window=tk.Tk(); window.withdraw(); image=qr_image(window,'192.0.2.1'); assert image.width()>100; window.update(); window.destroy()
+        result['qr_render']='passed'; result['bundled_gestures']=True
         result['tkinter']='passed'; result['status']='passed'
         Path(sys.argv[2]).write_text(json.dumps(result,indent=2))
     else:

@@ -15,12 +15,14 @@ jobs:
         with:
           python-version: '3.12'
           architecture: x64
-      - name: Protocol and validation tests
-        run: python -m unittest discover -s tests -v
       - name: Prepare build environment
         run: |
           python -m venv .venv
           .\.venv\Scripts\python.exe -m pip install -r requirements-build.txt
+      - name: Protocol and validation tests
+        run: .\.venv\Scripts\python.exe -m unittest discover -s tests -v
+      - name: Phone gesture tests
+        run: node --test tests/gestures.test.cjs tests/phone.test.cjs
       - name: Build portable Windows archive
         shell: pwsh
         run: .\scripts\build_windows.ps1

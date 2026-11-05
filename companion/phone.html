@@ -1,23 +1,121 @@
-<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1"><title>TouchFlow Remote</title><style>
-*{box-sizing:border-box}body{margin:0;background:#101a24;color:#edf4f3;font:16px system-ui;padding:20px;max-width:600px;margin:auto}h1{color:#80e1d1}button,input,textarea{font:inherit;border:1px solid #405965;border-radius:10px;padding:12px;background:#203440;color:#edf4f3}button{cursor:pointer}input,textarea{width:100%;margin:8px 0}.row{display:flex;gap:8px;margin:10px 0}.row>*{flex:1}#pad{height:42vh;min-height:220px;border:1px solid #80e1d1;border-radius:18px;background:#172b36;display:grid;place-content:center;text-align:center;touch-action:none;user-select:none;color:#a6c1c4}small{display:block;margin:8px 0;color:#9aadb3}.hidden{display:none}#status{min-height:24px;color:#80e1d1}.keys{display:flex;flex-wrap:wrap;gap:6px}.keys button{flex:1}#drag.active{background:#087e8b}button:disabled{opacity:.45}textarea{min-height:80px}
-</style><h1>TouchFlow ↗</h1><p id="status" role="status">Connect to your Windows companion</p><section id="pair"><label>Code shown on your computer<input id="code" autocomplete="off" autocapitalize="characters" maxlength="8" placeholder="8-character code"></label><button id="connect">Pair with computer</button><small>Approve the request on your computer. Use a trusted private Wi-Fi network. This connection uses unencrypted local HTTP.</small></section><section id="remote" class="hidden"><div id="pad" aria-label="Trackpad">Slide to move the pointer<small>Tap to click · Two fingers to scroll</small></div><div class="row"><button id="left">Left click</button><button id="right">Right click</button><button id="drag">Drag off</button></div><label>Pointer speed<input id="speed" type="range" min="0.5" max="4" step="0.25" value="1.5"></label><label>Send text<textarea id="text" placeholder="Type here, then tap Send text"></textarea></label><button id="send">Send text</button><small>Text goes to the active app on your computer.</small><div class="keys" id="keys"></div><div class="row"><button id="disconnect">Disconnect</button></div></section><script>
-let token=null,seq=0,chain=Promise.resolve(),drag=false,dx=0,dy=0,scroll=0,busy=false,waiting=false;
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>TouchFlow Remote</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#101a24;color:#edf4f3;font:16px system-ui;padding:20px;max-width:600px;margin:auto}
+h1{color:#80e1d1}button,input,textarea{font:inherit;border:1px solid #405965;border-radius:10px;padding:12px;background:#203440;color:#edf4f3}
+button{cursor:pointer;touch-action:manipulation}input,textarea{width:100%;margin:8px 0}.row{display:flex;gap:8px;margin:10px 0}.row>*{flex:1}
+#pad{height:42vh;min-height:220px;border:1px solid #80e1d1;border-radius:18px;background:#172b36;display:grid;place-content:center;text-align:center;color:#a6c1c4}
+#pad,#pad *{touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;-webkit-user-drag:none;-webkit-tap-highlight-color:transparent}
+#pad *{pointer-events:none}small{display:block;margin:8px 0;color:#9aadb3}.hidden{display:none}#status{min-height:24px;color:#80e1d1}
+.keys{display:flex;flex-wrap:wrap;gap:6px}.keys button{flex:1}#drag.active{background:#087e8b}button:disabled{opacity:.45}textarea{min-height:80px}
+</style>
+</head>
+<body>
+<h1>TouchFlow <span aria-hidden="true">↗</span></h1>
+<p id="status" role="status">Connect to your Windows companion</p>
+<section id="pair">
+<label>Code shown on your computer<input id="code" autocomplete="off" autocapitalize="characters" maxlength="8" placeholder="8-character code"></label>
+<button id="connect">Pair with computer</button>
+<small>Approve the request on your computer. Use a trusted private Wi-Fi network. This connection uses unencrypted local HTTP.</small>
+</section>
+<section id="remote" class="hidden">
+<div id="pad" aria-label="Trackpad" draggable="false">Slide to move the pointer<small>Tap to click · Tap, then tap and hold to drag<br>Two fingers to scroll</small></div>
+<div class="row"><button id="left">Left click</button><button id="right">Right click</button><button id="drag">Drag off</button></div>
+<label>Pointer speed<input id="speed" type="range" min="0.5" max="4" step="0.25" value="1.5"></label>
+<label>Send text<textarea id="text" placeholder="Type here, then tap Send text"></textarea></label>
+<button id="send">Send text</button><small>Text goes to the active app on your computer.</small>
+<div class="keys" id="keys"></div><div class="row"><button id="disconnect">Disconnect</button></div>
+<small>No session time limit. Use Disconnect on your phone or PC when finished.</small>
+</section>
+<script src="/gestures.js"></script>
+<script>
+let token=null,seq=0,chain=Promise.resolve(),dx=0,dy=0,scroll=0,busy=false,waiting=false;
+let online=true,epoch=0,needsRelease=false,heartbeatBusy=false;
 const $=id=>document.getElementById(id),status=text=>$('status').textContent=text;
-async function post(path,body){const response=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal:AbortSignal.timeout(5000)});const result=await response.json();if(!response.ok){const e=new Error(result.error||'Request failed');e.status=response.status;throw e}return result}
-function lost(message){token=null;drag=false;dx=dy=scroll=0;$('remote').classList.add('hidden');$('pair').classList.remove('hidden');$('drag').classList.remove('active');$('drag').textContent='Drag off';status(message)}
-function send(kind,payload={}){if(!token)return Promise.resolve();const current=token;chain=chain.catch(()=>{}).then(async()=>{if(token!==current)return;try{await post('/input',{token:current,seq:++seq,kind,...payload});status('Connected to Windows')}catch(e){if(e.status===423)status(e.message);else lost(e.message||'Connection lost. Pair again.')}});return chain}
-$('connect').onclick=async()=>{if(waiting)return;waiting=true;$('connect').disabled=true;try{const r=await post('/pair',{code:$('code').value.trim()});status('Approve this phone on your computer…');for(let n=0;n<55;n++){await new Promise(r=>setTimeout(r,1000));const s=await post('/status',{ticket:r.ticket});if(s.token){token=s.token;seq=0;chain=Promise.resolve();$('pair').classList.add('hidden');$('remote').classList.remove('hidden');status('Connected to Windows');return}}throw Error('Approval timed out')}catch(e){status(e.message)}finally{waiting=false;$('connect').disabled=false}};
-$('left').onclick=()=>send('click',{button:'left'});$('right').onclick=()=>send('click',{button:'right'});
-$('drag').onclick=()=>{drag=!drag;$('drag').textContent=drag?'Drag on':'Drag off';$('drag').classList.toggle('active',drag);send('drag',{down:drag})};
-$('send').onclick=async()=>{const text=$('text').value;if(!text)return;for(let i=0;i<text.length;i+=256)await send('text',{text:text.slice(i,i+256)});if(token)$('text').value=''};
+async function post(path,body){
+  const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),5000);
+  try{
+    const response=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal:controller.signal});
+    const result=await response.json();
+    if(!response.ok){const e=new Error(result.error||'Request failed');e.status=response.status;throw e}
+    return result;
+  }finally{clearTimeout(timer)}
+}
+function updateDrag(){const active=trackpad.manualDrag||trackpad.autoDrag;$('drag').textContent=active?'Drag on':'Drag off';$('drag').classList.toggle('active',active)}
+function resetTouch(){dx=dy=scroll=0;trackpad.points.clear();trackpad.start=trackpad.lastTap=null;trackpad.autoDrag=trackpad.manualDrag=false;updateDrag()}
+function lost(message){token=null;epoch++;resetTouch();$('remote').classList.add('hidden');$('pair').classList.remove('hidden');status(message)}
+function interrupted(){
+  online=false;needsRelease=true;epoch++;resetTouch();
+  status('Connection interrupted. Retrying automatically…');
+}
+function send(kind,payload={}){
+  if(!token||(!online&&!['heartbeat','release'].includes(kind)))return Promise.resolve();
+  const current=token,currentEpoch=epoch;
+  chain=chain.catch(()=>{}).then(async()=>{
+    if(token!==current||epoch!==currentEpoch)return;
+    try{
+      if(needsRelease){await post('/input',{token:current,seq:++seq,kind:'release'});needsRelease=false}
+      await post('/input',{token:current,seq:++seq,kind,...payload});online=true;
+      status('Connected to Windows · no time limit');
+    }catch(e){
+      if(e.status===401)lost(e.message);
+      else if(e.status===423){online=true;status(e.message)}
+      else interrupted();
+    }
+  });return chain;
+}
+$('connect').onclick=async()=>{
+  if(waiting)return;waiting=true;$('connect').disabled=true;
+  try{
+    const r=await post('/pair',{code:$('code').value.trim()});status('Approve this phone on your computer…');
+    for(let n=0;n<55;n++){
+      await new Promise(r=>setTimeout(r,1000));const s=await post('/status',{ticket:r.ticket});
+      if(s.token){token=s.token;seq=0;epoch++;online=true;needsRelease=false;chain=Promise.resolve();resetTouch();$('pair').classList.add('hidden');$('remote').classList.remove('hidden');status('Connected to Windows · no time limit');return}
+    }throw Error('Approval timed out');
+  }catch(e){status(e.message)}finally{waiting=false;$('connect').disabled=false}
+};
+function flushMotion(){
+  if(!token||!online){dx=dy=scroll=0;return Promise.resolve()}
+  let last=Promise.resolve();
+  if(Math.abs(scroll)>=1){
+    while(Math.abs(scroll)>=1){const amount=Math.max(-1200,Math.min(1200,Math.round(scroll)));scroll-=amount;last=send('scroll',{y:amount})}
+    dx=dy=0;
+  }else{
+    while(Math.abs(dx)>=1||Math.abs(dy)>=1){const x=Math.max(-500,Math.min(500,Math.round(dx))),y=Math.max(-500,Math.min(500,Math.round(dy)));dx-=x;dy-=y;last=send('move',{x,y})}
+  }return last;
+}
+function gesture(kind,payload={}){
+  if(kind==='move'){dx+=payload.x;dy+=payload.y}
+  else if(kind==='scroll'){scroll+=payload.y}
+  else{flushMotion();send(kind,payload)}
+}
+const trackpad=new TouchFlowTrackpad(gesture,()=>Number($('speed').value));
+$('left').onclick=()=>{flushMotion();send('click',{button:'left'})};
+$('right').onclick=()=>{flushMotion();send('click',{button:'right'})};
+$('drag').onclick=()=>{trackpad.toggleDrag();updateDrag()};
+$('send').onclick=async()=>{const text=$('text').value;if(!text||!online)return;const chars=Array.from(text);for(let i=0;i<chars.length;i+=256)await send('text',{text:chars.slice(i,i+256).join('')});if(token&&online)$('text').value=''};
 for(const [key,label] of [['Backspace','⌫'],['Tab','Tab'],['Escape','Esc'],['Enter','Enter'],['ArrowLeft','←'],['ArrowUp','↑'],['ArrowDown','↓'],['ArrowRight','→']]){const b=document.createElement('button');b.textContent=label;b.onclick=()=>send('key',{key});$('keys').append(b)}
 $('disconnect').onclick=async()=>{const old=token;await send('release');lost('Disconnected');if(old)post('/disconnect',{token:old}).catch(()=>{})};
-let points=new Map(),start=null,moved=false,multi=false;
-const pad=$('pad');pad.onpointerdown=e=>{pad.setPointerCapture(e.pointerId);points.set(e.pointerId,{x:e.clientX,y:e.clientY});if(points.size===1){start={x:e.clientX,y:e.clientY,t:Date.now()};moved=false;multi=false}else multi=true};
-pad.onpointermove=e=>{const previous=points.get(e.pointerId);if(!previous)return;const x=e.clientX-previous.x,y=e.clientY-previous.y;points.set(e.pointerId,{x:e.clientX,y:e.clientY});if(start&&Math.hypot(e.clientX-start.x,e.clientY-start.y)>5)moved=true;if(points.size>1){scroll+=-y*5}else{dx+=x*Number($('speed').value);dy+=y*Number($('speed').value)}};
-function finish(e,cancel=false){points.delete(e.pointerId);if(!points.size){if(!cancel&&!multi&&!moved&&start&&Date.now()-start.t<300&&!drag)send('click',{button:'left'});start=null}}
-pad.onpointerup=e=>finish(e);pad.onpointercancel=e=>{finish(e,true);send('release');drag=false;$('drag').textContent='Drag off';$('drag').classList.remove('active')};
-setInterval(async()=>{if(busy||!token)return;busy=true;try{if(Math.abs(scroll)>=1){const amount=Math.max(-1200,Math.min(1200,Math.round(scroll)));scroll-=amount;dx=dy=0;await send('scroll',{y:amount})}else if(Math.abs(dx)>=1||Math.abs(dy)>=1){const x=Math.max(-500,Math.min(500,Math.round(dx))),y=Math.max(-500,Math.min(500,Math.round(dy)));dx-=x;dy-=y;await send('move',{x,y})}}finally{busy=false}},25);
-setInterval(()=>{if(token&&!busy)send('heartbeat')},2000);
-document.addEventListener('visibilitychange',()=>{if(document.hidden){points.clear();dx=dy=scroll=0;send('release');drag=false;$('drag').textContent='Drag off';$('drag').classList.remove('active')}});
-</script></html>
+const pad=$('pad');
+for(const name of ['selectstart','contextmenu','dragstart','dblclick','mousedown'])pad.addEventListener(name,e=>e.preventDefault());
+for(const name of ['touchstart','touchmove'])pad.addEventListener(name,e=>{if(e.cancelable)e.preventDefault()},{passive:false});
+pad.addEventListener('pointerdown',e=>{if(e.cancelable)e.preventDefault();if(!online)return;pad.setPointerCapture(e.pointerId);trackpad.down(e.pointerId,e.clientX,e.clientY);updateDrag()});
+pad.addEventListener('pointermove',e=>{if(e.cancelable)e.preventDefault();trackpad.move(e.pointerId,e.clientX,e.clientY)});
+pad.addEventListener('pointerup',e=>{if(e.cancelable)e.preventDefault();trackpad.up(e.pointerId);flushMotion();updateDrag()});
+pad.addEventListener('pointercancel',e=>{trackpad.up(e.pointerId,true);resetTouch()});
+pad.addEventListener('lostpointercapture',e=>{if(trackpad.points.has(e.pointerId)){trackpad.cancel();resetTouch()}});
+setInterval(async()=>{if(busy||!token||!online)return;busy=true;try{await flushMotion()}finally{busy=false}},25);
+setInterval(()=>{if(token&&!heartbeatBusy){heartbeatBusy=true;send('heartbeat').finally(()=>{heartbeatBusy=false})}},2000);
+function suspend(){if(!token)return;epoch++;dx=dy=scroll=0;trackpad.cancel();resetTouch();needsRelease=true}
+document.addEventListener('visibilitychange',()=>{if(document.hidden)suspend();else if(token){needsRelease=true;send('heartbeat')}});
+window.addEventListener('pagehide',suspend);
+window.addEventListener('offline',()=>{if(token)interrupted()});
+window.addEventListener('online',()=>{if(token)send('heartbeat')});
+</script>
+</body>
+</html>

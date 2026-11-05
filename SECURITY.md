@@ -2,15 +2,15 @@
 
 ## Supported version
 
-Only the latest 0.1.x alpha is considered for fixes. TouchFlow is experimental and has not received an independent security audit.
+Only the latest 0.2.x alpha is considered for fixes. TouchFlow is experimental and has not received an independent security audit.
 
 ## Network boundary
 
 The companion listens on all IPv4 interfaces on port 8765. It uses plain HTTP, not TLS. Pairing provides authorization but does not encrypt traffic or resist an on-path network attacker. Use only a trusted private network. Do not expose the port to the internet, enable router forwarding, or send passwords/sensitive text. Do not run as administrator.
 
-The current design uses short-lived random pairing codes, desktop approval, random in-memory session tokens, same-origin and Host checks, bounded command payloads, increasing sequence numbers, pairing attempt limits and an inactivity timeout. These measures are not a substitute for transport encryption. A paired device can control the foreground application, including potentially destructive actions; approve only your own phone.
+The current design uses short-lived random pairing codes, desktop approval, random in-memory session tokens, same-origin and Host checks, bounded command payloads, increasing sequence numbers, pairing attempt limits and a communication-loss check that releases held input. These measures are not a substitute for transport encryption. A paired device can control the foreground application, including potentially destructive actions; approve only your own phone.
 
-One phone is supported. Pause blocks input; Disconnect revokes its token; closing stops the server. Held drag buttons are released on pause/disconnect/timeout. Physical access to the PC remains the recovery path.
+One phone is supported. Pause blocks input; Disconnect revokes its token; closing stops the server. Approved sessions have no inactivity or duration expiry. They remain authorized until explicitly disconnected or the companion stops. The eight-second communication-loss safety check only clears queued input and releases a held mouse button; it does not revoke authorization. Codes still expire after two minutes and pending approvals after one minute, independently of established sessions. Held drag buttons also release on pause/disconnect/cancelled gestures. Physical access to the PC remains the recovery path.
 
 ## Report a vulnerability
 
