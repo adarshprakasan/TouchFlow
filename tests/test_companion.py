@@ -50,7 +50,7 @@ class ConnectionAndQR(unittest.TestCase):
             self.assertFalse(app.connection_safety(now=16));release.assert_not_called()
         self.assertEqual(app.jobs.get_nowait()[1][1]['kind'],'move')
     def test_pairing_approval_expiry_is_separate(self):
-        app.state.update(token='still-approved',last=100,pending={'time':0})
+        app.state.update(token='still-approved',last=100,pending={'time':0,'approved':False})
         with patch.object(app,'release'): app.connection_safety(now=100)
         self.assertIsNone(app.state['pending'])
         self.assertEqual(app.state['token'],'still-approved')
@@ -65,6 +65,59 @@ class ConnectionAndQR(unittest.TestCase):
         with patch.object(app.qrcode,'QRCode') as factory:
             app.qr_matrix('192.0.2.10')
             factory.return_value.add_data.assert_called_once_with(app.phone_url('192.0.2.10'))
+
+class ReleaseAndTick(unittest.TestCase):
+    def setUp(self):
+        app.held=False;app.release_pending=False;app.release_retry_at=0
+    def tearDown(self):
+        app.held=False;app.release_pending=False;app.release_retry_at=0
+    def test_blocked_release_is_retried_without_crashing(self):
+        app.held=True
+        with patch.object(app,'mouse',side_effect=[RuntimeError('blocked'),None]) as mouse, patch.object(app.time,'monotonic',side_effect=[1,2]):
+            self.assertFalse(app.release());self.assertTrue(app.release_pending);self.assertTrue(app.held)
+            self.assertTrue(app.release());self.assertFalse(app.release_pending);self.assertFalse(app.held)
+            self.assertEqual(mouse.call_count,2)
+    def test_blocked_release_retry_is_throttled(self):
+        app.held=True;app.release_pending=True;app.release_retry_at=10
+        with patch.object(app,'mouse') as mouse,patch.object(app.time,'monotonic',return_value=9):
+            self.assertFalse(app.release());mouse.assert_not_called()
+    def test_watchdog_retries_release_with_live_heartbeat(self):
+        app.held=True;app.release_pending=True;app.release_retry_at=0
+        app.state.update(token='approved',last=100,pending=None)
+        with patch.object(app,'mouse') as mouse:
+            self.assertFalse(app.connection_safety(now=101))
+            mouse.assert_called_once_with(4)
+        self.assertFalse(app.release_pending)
+    def test_tick_reschedules_after_poll_failure(self):
+        events=[]
+        def fail():raise RuntimeError('blocked')
+        app.run_tick(fail,lambda:events.append('scheduled'),lambda error:events.append(str(error)))
+        self.assertEqual(events,['blocked','scheduled'])
+    def test_tick_reschedules_even_when_recovery_fails(self):
+        scheduled=[]
+        def fail():raise RuntimeError('failure')
+        with self.assertRaises(RuntimeError):app.run_tick(fail,lambda:scheduled.append(True),lambda error:fail())
+        self.assertEqual(scheduled,[True])
+
+class ApprovalExpiry(unittest.TestCase):
+    def setUp(self):
+        self.pending={'time':100,'ticket':'test-only','ip':'192.0.2.1','approved':False}
+        app.state.update(pending=self.pending,token=None,seq=0)
+    def test_valid_approval_connects(self):
+        self.assertEqual(app.resolve_approval(self.pending,True,now=159),'approved')
+        self.assertTrue(app.state['token'])
+    def test_dialog_cannot_bypass_expiry(self):
+        for now in (160,700):
+            app.state.update(pending=self.pending,token=None)
+            self.assertEqual(app.resolve_approval(self.pending,True,now=now),'expired')
+            self.assertIsNone(app.state['token']);self.assertIsNone(app.state['pending'])
+    def test_replaced_request_cannot_be_approved(self):
+        app.state['pending']=None
+        self.assertEqual(app.resolve_approval(self.pending,True,now=110),'expired')
+        self.assertIsNone(app.state['token'])
+    def test_rejection_never_creates_token(self):
+        self.assertEqual(app.resolve_approval(self.pending,False,now=110),'rejected')
+        self.assertIsNone(app.state['token'])
 
 class Protocol(unittest.TestCase):
     @classmethod
@@ -117,5 +170,27 @@ class Protocol(unittest.TestCase):
         self.assertEqual(self.request('/disconnect',{'token':'test-token'})[0],200)
         self.assertIsNone(app.state['token'])
         self.assertEqual(self.request('/input',{**command,'seq':4})[0],401)
+
+    def test_expired_status_does_not_depend_on_ui_poll(self):
+        app.state['pending']={'time':time.monotonic()-61,'ticket':'expired','ip':'192.0.2.1','approved':False}
+        self.assertEqual(self.request('/status',{'ticket':'expired'})[0],403)
+        self.assertIsNone(app.state['pending']);self.assertIsNone(app.state['token'])
+    def test_large_integer_is_rejected_and_handler_remains_usable(self):
+        app.state['token']='test-token'
+        for kind,payload in [('move',{'x':10**400,'y':0}),('scroll',{'y':-(10**400)})]:
+            self.assertEqual(self.request('/input',{'token':'test-token','seq':1,'kind':kind,**payload})[0],400)
+        self.assertEqual(self.request('/input',{'token':'test-token','seq':2,'kind':'heartbeat'})[0],200)
+    def test_heartbeat_reports_pause_and_resume(self):
+        app.state.update(token='test-token',paused=True)
+        code,result=self.request('/input',{'token':'test-token','seq':1,'kind':'heartbeat'})
+        self.assertEqual(code,200);self.assertTrue(result['paused'])
+        app.state['paused']=False
+        self.assertFalse(self.request('/input',{'token':'test-token','seq':2,'kind':'heartbeat'})[1]['paused'])
+    def test_pending_release_blocks_new_movement(self):
+        app.state['token']='test-token';app.release_pending=True
+        try:
+            self.assertEqual(self.request('/input',{'token':'test-token','seq':1,'kind':'move','x':1,'y':0})[0],423)
+            self.assertTrue(self.request('/input',{'token':'test-token','seq':2,'kind':'heartbeat'})[1]['paused'])
+        finally:app.release_pending=False
 
 if __name__=='__main__': unittest.main()

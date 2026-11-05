@@ -21,3 +21,5 @@
 | Executable warning | The alpha build is unsigned. Review the release and checksum; do not bypass security controls you do not understand. |
 
 For bug reports, include Windows version, TouchFlow version, phone OS/browser, steps and a non-sensitive error message. Never include pairing codes, session tokens, private typed text or screenshots containing them.
+
+If Windows blocks a button release (for example on a secure desktop), 0.2.1 keeps the release pending and retries after access returns. The desktop and phone report paused input while recovery is pending. Do not run TouchFlow as administrator to work around this restriction. An approval dialog left open beyond one minute now expires even if you later click Approve; request a new pairing.

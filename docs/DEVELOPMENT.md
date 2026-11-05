@@ -18,7 +18,7 @@ python -m venv .venv
 .\scriptsuild_windows.ps1
 ```
 
-If local PowerShell policy prevents script execution, follow your organization's policy or run the documented PyInstaller build command manually; do not weaken machine-wide protections. The script builds a single-file windowed executable, bundles the phone page, and creates `dist/TouchFlow-0.2.0-windows-x64.zip` with documentation and third-party licenses. `dist/SHA256SUMS.txt` hashes the ZIP. Build tools are not runtime dependencies.
+If local PowerShell policy prevents script execution, follow your organization's policy or run the documented PyInstaller build command manually; do not weaken machine-wide protections. The script builds a single-file windowed executable, bundles the phone page, and creates `dist/TouchFlow-0.2.1-windows-x64.zip` with documentation and third-party licenses. `dist/SHA256SUMS.txt` hashes the ZIP. Build tools are not runtime dependencies.
 
 The executable is unsigned. Releases must disclose that fact. Build on Windows x64; cross-platform builds are not provided. Packaged code uses paths relative to `__file__`, which PyInstaller maps into its extracted bundle.
 

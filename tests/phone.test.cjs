@@ -6,17 +6,17 @@ const html=fs.readFileSync(require('node:path').join(__dirname,'../companion/pho
 function harness(){
   const elements=new Map(),requests=[],timers=[],documentEvents={},windowEvents={};
   function element(id){if(!elements.has(id))elements.set(id,{id,value:id==='speed'?'1.5':'',textContent:'',classList:{add(){},remove(){},toggle(){}},listeners:{},addEventListener(name,fn,options){this.listeners[name]={fn,options}},append(){},setPointerCapture(){}});return elements.get(id)}
-  let fail=null;
+  let fail=null,response={ok:true};
   const context=vm.createContext({console,AbortController,setTimeout,clearTimeout,TouchFlowTrackpad:require('../companion/gestures.js'),
     setInterval(fn){timers.push(fn)},window:{addEventListener(name,fn){windowEvents[name]=fn}},
     document:{hidden:false,getElementById:element,createElement:()=>element(Symbol()),addEventListener(name,fn){documentEvents[name]=fn}},
-    fetch:async(path,options)=>{const body=JSON.parse(options.body);requests.push({path,...body});if(fail)throw fail;return {ok:true,json:async()=>({ok:true})}}
+    fetch:async(path,options)=>{const body=JSON.parse(options.body);requests.push({path,...body});if(fail)throw fail;return {ok:true,json:async()=>response}}
   });
   vm.runInContext(html.match(/<script>([\s\S]*?)<\/script>/)[1],context);
   const run=code=>vm.runInContext(code,context);
   run('token="session-token";seq=0');
   function pointer(name,id,x,y){let prevented=false;element('pad').listeners[name].fn({pointerId:id,clientX:x,clientY:y,cancelable:true,preventDefault(){prevented=true}});return prevented}
-  return {elements,requests,run,pointer,documentEvents,windowEvents,context,setFail:error=>fail=error,settle:()=>run('chain')};
+  return {elements,requests,run,pointer,documentEvents,windowEvents,context,setFail:error=>fail=error,setResponse:value=>response=value,settle:()=>run('chain')};
 }
 test('touchpad prevents Safari selection without disabling keyboard editing',()=>{
   assert.match(html,/-webkit-user-select:none/);assert.match(html,/-webkit-touch-callout:none/);assert.match(html,/#pad,#pad \*/);
@@ -38,4 +38,19 @@ test('explicit server revocation returns to pairing',async()=>{
 });
 test('backgrounding releases input without discarding session',async()=>{
   const h=harness();h.context.document.hidden=true;h.documentEvents.visibilitychange();await h.settle();assert.equal(h.run('token'),'session-token');assert.ok(h.requests.some(r=>r.kind==='release'));
+});
+
+test('heartbeat preserves paused status and reports resume',async()=>{
+  const h=harness();const error=new Error('Input is paused on the computer');error.status=423;
+  h.run('trackpad.manualDrag=true');h.setFail(error);await h.run("send('move',{x:1,y:0})");
+  assert.equal(h.run('trackpad.manualDrag'),false);
+  h.setFail(null);h.setResponse({ok:true,paused:true});await h.run("send('heartbeat')");
+  assert.equal(h.context.document.getElementById('status').textContent,'Input is paused on the computer');
+  h.setResponse({ok:true,paused:false});await h.run("send('heartbeat')");
+  assert.match(h.context.document.getElementById('status').textContent,/Connected to Windows/);
+});
+test('pause acknowledgement discards queued movement',async()=>{
+  const h=harness();h.setResponse({ok:true,paused:true});
+  h.run("send('heartbeat');send('move',{x:99,y:99})");await h.settle();
+  assert.deepEqual(h.requests.map(r=>r.kind),['heartbeat']);assert.equal(h.run('token'),'session-token');
 });

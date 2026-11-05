@@ -6,11 +6,11 @@
 
 Use your phone as a wireless trackpad and keyboard for your Windows PC. Open the phone controls in a browser, pair locally, and control the active desktop application.
 
-**Status: v0.2.0 alpha.** TouchFlow is an independent project by [Adarsh Prakasan](https://github.com/adarshprakasan). It is intended for trusted private networks and early feedback. Broad device compatibility and phone-to-PC operation have not yet been validated across a device matrix.
+**Status: v0.2.1 alpha.** TouchFlow is an independent project by [Adarsh Prakasan](https://github.com/adarshprakasan). It is intended for trusted private networks and early feedback. Broad device compatibility and phone-to-PC operation have not yet been validated across a device matrix.
 
 ## Download and run
 
-1. Go to **[Releases](https://github.com/adarshprakasan/TouchFlow/releases)** and download `TouchFlow-0.2.0-windows-x64.zip` from the alpha release assets.
+1. Go to **[Releases](https://github.com/adarshprakasan/TouchFlow/releases)** and download `TouchFlow-0.2.1-windows-x64.zip` from the alpha release assets.
 2. Extract the ZIP into a folder on your Windows PC.
 3. Run **TouchFlow.exe**. The portable build includes Python; you do not need to install it.
 4. Connect your phone and PC to the same trusted private Wi-Fi network.
@@ -21,7 +21,18 @@ Keep the companion window open. Close it to stop the service. The executable is 
 
 **The connection uses unencrypted HTTP. Do not use public/shared Wi-Fi, forward port 8765, or send passwords or other sensitive text.** Pairing does not protect against someone who can intercept traffic on the network. See [Security](SECURITY.md).
 
-## What changed in 0.2.0
+## Screenshots
+
+![Windows companion with example pairing details](docs/screenshots/windows-companion.png)
+
+[Phone controller and pause-state screenshots](docs/SCREENSHOTS.md). Screenshots use an isolated review instance with example connection details.
+
+## What changed in 0.2.1
+
+- Fixed blocked button-release recovery, expired approvals, misleading paused status and numeric-validation overflow.
+- Added regression tests for all four review findings.
+
+Features introduced in 0.2.0:
 
 - Local QR code and network-address selector for opening the phone controls.
 - Double-tap-and-hold dragging, Safari text-selection prevention, and ordered mouse release after movement.

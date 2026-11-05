@@ -60,11 +60,12 @@ function send(kind,payload={}){
     if(token!==current||epoch!==currentEpoch)return;
     try{
       if(needsRelease){await post('/input',{token:current,seq:++seq,kind:'release'});needsRelease=false}
-      await post('/input',{token:current,seq:++seq,kind,...payload});online=true;
-      status('Connected to Windows · no time limit');
+      const result=await post('/input',{token:current,seq:++seq,kind,...payload});online=true;
+      if(result.paused===true){epoch++;resetTouch();status('Input is paused on the computer')}
+      else status('Connected to Windows · no time limit');
     }catch(e){
       if(e.status===401)lost(e.message);
-      else if(e.status===423){online=true;status(e.message)}
+      else if(e.status===423){online=true;epoch++;resetTouch();status(e.message)}
       else interrupted();
     }
   });return chain;

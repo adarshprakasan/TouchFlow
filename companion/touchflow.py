@@ -1,13 +1,13 @@
 """TouchFlow Windows companion. Python 3.12+ with qrcode."""
 import ctypes as C
 from ctypes import wintypes as W
-import http.server, json, secrets, socket, threading, time, queue, sys, math
+import http.server, json, secrets, socket, threading, time, queue, sys
 import tkinter as tk
 from tkinter import messagebox, ttk
 import qrcode
 from pathlib import Path
 
-VERSION = "0.2.0"
+VERSION = "0.2.1"
 PORT = 8765
 ROOT = Path(__file__).resolve().parent
 jobs = queue.Queue(maxsize=512)
@@ -36,11 +36,25 @@ def mouse(flags,dx=0,dy=0,data=0):
 def key(vk=0,scan=0,flags=0):
     item=INPUT(); item.type=1; item.ki=KI(vk,scan,flags,0,0); emit(item)
 held=False
+release_pending=False
+release_retry_at=0.0
 
 def release():
-    global held
-    if held:
-        mouse(4); held=False
+    """Keep failed releases pending for retry; never stop the desktop loop."""
+    global held,release_pending,release_retry_at
+    if not held:
+        release_pending=False
+        return True
+    now=time.monotonic()
+    if release_pending and now<release_retry_at:
+        return False
+    try:
+        mouse(4)
+    except (RuntimeError,OSError):
+        release_pending=True; release_retry_at=now+0.5
+        return False
+    held=False; release_pending=False; release_retry_at=0.0
+    return True
 
 def command(body):
     global held
@@ -62,16 +76,51 @@ def command(body):
         key(vk); key(vk,flags=2)
     elif kind=='release': release()
 
+def bounded_number(value,limit):
+    # Range comparisons reject NaN/infinity and huge integers without float conversion.
+    return type(value) in (int,float) and -limit<=value<=limit
+
 def validate(b):
     k=b.get('kind')
     if k=='move':
-        return all(type(b.get(n)) in (int,float) and math.isfinite(b[n]) and abs(b[n])<=500 for n in ('x','y'))
-    if k=='scroll': return type(b.get('y')) in (int,float) and math.isfinite(b['y']) and abs(b['y'])<=1200
+        return all(bounded_number(b.get(n),500) for n in ('x','y'))
+    if k=='scroll': return bounded_number(b.get('y'),1200)
     if k=='click': return b.get('button') in ('left','right')
     if k=='drag': return type(b.get('down')) is bool
     if k=='text': return isinstance(b.get('text'),str) and 0<len(b['text'])<=256 and not any(0xD800<=ord(c)<=0xDFFF for c in b['text'])
     if k=='key': return b.get('key') in ('Enter','Backspace','Tab','Escape','ArrowLeft','ArrowRight','ArrowUp','ArrowDown')
     return k in ('release','heartbeat')
+
+def expire_pending(now):
+    """Caller holds lock. Expiry is checked by HTTP handlers as well as the UI."""
+    pending=state['pending']
+    if pending and now-pending['time']>=60:
+        if pending['approved']:
+            state['token']=None; state['seq']=0
+        state['pending']=None
+
+def resolve_approval(pending,approved,now=None):
+    now=time.monotonic() if now is None else now
+    with lock:
+        expire_pending(now)
+        if state['pending'] is not pending:
+            return 'expired'
+        if not approved:
+            state['pending']=None
+            return 'rejected'
+        pending['approved']=True
+        state['token']=secrets.token_urlsafe(32); state['last']=now; state['seq']=0
+        return 'approved'
+
+def run_tick(callback,schedule,on_error):
+    """Schedule the next poll even if input or error recovery raises."""
+    try:
+        callback()
+    except Exception as error:
+        on_error(error)
+    finally:
+        schedule()
+
 
 class Handler(http.server.BaseHTTPRequestHandler):
     protocol_version='HTTP/1.1'
@@ -111,6 +160,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         except (ValueError,TypeError): return self.reply(400,{'error':'Invalid message'})
         now=time.monotonic()
         with lock:
+            expire_pending(now)
             if self.path=='/pair':
                 ip=self.client_address[0]
                 recent=[t for t in attempts.get(ip,[]) if now-t<60]
@@ -140,12 +190,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
             seq=b.get('seq')
             if type(seq) is not int or seq<=state['seq'] or not validate(b): return self.reply(400,{'error':'Invalid command'})
             state['last']=now
-            if state['paused'] and b['kind'] not in ('heartbeat','release'): return self.reply(423,{'error':'Input is paused on the computer'})
+            paused=state['paused'] or release_pending
+            if paused and b['kind'] not in ('heartbeat','release'): return self.reply(423,{'error':'Input is paused on the computer','paused':True})
             state['seq']=seq
             if b['kind']!='heartbeat':
                 try: jobs.put_nowait(('input',(token,b)))
                 except queue.Full: return self.reply(429,{'error':'Too many commands'})
-        self.reply(200,{'ok':True})
+        self.reply(200,{'ok':True,'paused':paused})
 
 class Server(http.server.ThreadingHTTPServer):
     daemon_threads=True
@@ -163,10 +214,9 @@ def connection_safety(now=None):
     """Release stale held input without expiring the approved session."""
     now=time.monotonic() if now is None else now
     with lock:
-        if state['pending'] and now-state['pending']['time']>60:
-            state['pending']=None
+        expire_pending(now)
         stale=not state['token'] or now-state['last']>8
-    if stale:
+    if stale or release_pending:
         while True:
             try: jobs.get_nowait()
             except queue.Empty: break
@@ -244,19 +294,18 @@ def main():
         messagebox.showerror('TouchFlow cannot start',str(e)); root.destroy(); raise SystemExit(1)
     asked=None
 
-    def tick():
+    def poll():
         nonlocal asked
+        was_pending=release_pending
         connection_safety()
+        if release_pending: status.configure(text='Windows blocked button release. Retrying; remote input is paused.')
+        elif was_pending: status.configure(text='Input paused' if state['paused'] else ('Phone connected - input enabled' if state['token'] else 'Disconnected. Pair again.'))
         with lock: pending=state['pending']
         if pending and not pending['approved'] and asked!=pending['ticket']:
             asked=pending['ticket']
             approved=messagebox.askyesno('Approve phone?',f"Allow phone at {pending['ip']} to control this computer?\n\nApprove only your own phone.")
-            with lock:
-                if state['pending'] is pending:
-                    if approved:
-                        pending['approved']=True; state['token']=secrets.token_urlsafe(32); state['last']=time.monotonic(); state['seq']=0
-                        status.configure(text='Phone connected - input enabled')
-                    else: state['pending']=None
+            result=resolve_approval(pending,approved)
+            status.configure(text={'approved':'Phone connected - input enabled','expired':'Pairing request expired. Ask the phone to pair again.','rejected':'Pairing rejected.'}[result])
         for _ in range(64):
             try: kind,payload=jobs.get_nowait()
             except queue.Empty: break
@@ -264,10 +313,16 @@ def main():
                 if kind=='release': release()
                 else:
                     token,b=payload
-                    with lock: allowed=token==state['token'] and (not state['paused'] or b['kind']=='release')
+                    with lock: allowed=token==state['token'] and ((not state['paused'] and not release_pending) or b['kind']=='release')
                     if allowed: command(b)
             except Exception as e: status.configure(text=str(e)); revoke()
-        root.after(15,tick)
+
+    def on_tick_error(error):
+        revoke()
+        status.configure(text='Input stopped: '+str(error))
+
+    def tick():
+        run_tick(poll,lambda: root.after(15,tick),on_tick_error)
 
     def close():
         revoke()

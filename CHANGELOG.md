@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.1 alpha — 2026-11-05
+
+- Retry blocked mouse-button releases while keeping the input loop alive and preventing new input until release succeeds.
+- Recheck approval expiry after the desktop dialog returns and enforce pending-request expiry in HTTP handlers.
+- Include effective pause state in heartbeat responses and preserve the paused phone status until resumed.
+- Reject extremely large movement/scroll integers without overflowing numeric validation.
+- Add focused regressions for all four review findings, including failure recovery and request-handler survival.
+
+
 ## 0.2.0 alpha — 2026-11-05
 
 - Added locally rendered QR codes and a network-address selector; scanning opens the phone controller.

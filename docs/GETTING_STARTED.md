@@ -2,7 +2,7 @@
 
 ## Portable Windows download
 
-Download the Windows x64 ZIP from the [alpha release](https://github.com/adarshprakasan/TouchFlow/releases). Use the asset named `TouchFlow-0.2.0-windows-x64.zip`, rather than GitHub's automatic source archive, if you want the included executable. Extract the entire archive and launch `TouchFlow.exe`. Python is bundled. Keep the companion window open.
+Download the Windows x64 ZIP from the [alpha release](https://github.com/adarshprakasan/TouchFlow/releases). Use the asset named `TouchFlow-0.2.1-windows-x64.zip`, rather than GitHub's automatic source archive, if you want the included executable. Extract the entire archive and launch `TouchFlow.exe`. Python is bundled. Keep the companion window open.
 
 The build is unsigned. Windows may display a reputation warning; TouchFlow does not disable or bypass Windows security controls. Review the release and checksums before deciding whether to run it.
 
