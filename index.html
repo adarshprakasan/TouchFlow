@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#101a24" />
+    <title>TouchFlow — Control surface demo</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <a class="brand" href="#" aria-label="TouchFlow home"><span class="brand-mark">↗</span> TouchFlow</a>
+        <div class="demo-pill"><span></span> Demo mode</div>
+      </header>
+
+      <section class="intro">
+        <div>
+          <p class="eyebrow">PHONE CONTROL SURFACE</p>
+          <h1>Your phone,<br /><em>in control.</em></h1>
+          <p class="lede">A connected desktop companion will enable system-wide control. This prototype keeps every action inside this page.</p>
+        </div>
+        <button class="pair-button" id="pairButton" type="button"><span>⌁</span> Pair a computer</button>
+      </section>
+
+      <div class="workspace">
+        <section class="controller" aria-label="TouchFlow controller">
+          <div class="connection-row"><span class="connection-dot"></span><span id="connectionLabel">Not connected</span><button id="pairSmall" class="text-button" type="button">Pair</button></div>
+          <nav class="mode-tabs" aria-label="Control modes">
+            <button class="mode-tab active" data-mode="trackpad" type="button">⌖ <span>Trackpad</span></button>
+            <button class="mode-tab" data-mode="keyboard" type="button">⌨ <span>Keyboard</span></button>
+            <button class="mode-tab" data-mode="gestures" type="button">✣ <span>Gestures</span></button>
+          </nav>
+
+          <div class="mode-view active" id="trackpadView">
+            <div class="surface-hint"><span>MOVE</span><span>DRAG TO CONTROL</span></div>
+            <div class="touch-surface" id="touchSurface" aria-label="Trackpad demo surface" role="application">
+              <div class="surface-grid"></div>
+              <div class="surface-center"><div class="touch-icon">⌖</div><strong>Touch to move</strong><small>Tap to click · Two fingers to scroll</small></div>
+              <div class="surface-crosshair" id="surfacePointer"></div>
+              <div class="surface-toast" id="surfaceToast" aria-live="polite"></div>
+            </div>
+            <div class="click-controls"><button class="click-button" id="leftClick" type="button"><span>◉</span><b>Left click</b></button><button class="click-button" id="rightClick" type="button"><span>⊙</span><b>Right click</b></button></div>
+            <div class="sensitivity"><div><span>Pointer speed</span><b id="speedValue">Medium</b></div><input id="sensitivity" type="range" min="1" max="5" value="3" aria-label="Pointer speed" /></div>
+          </div>
+
+          <div class="mode-view" id="keyboardView">
+            <label class="field-label" for="keyboardInput">Type a message</label>
+            <textarea id="keyboardInput" rows="4" placeholder="Text appears in the demo preview…"></textarea>
+            <div class="key-row"><button data-key="Escape" type="button">Esc</button><button data-key="Tab" type="button">Tab</button><button data-key="←" type="button">←</button><button data-key="↑" type="button">↑</button><button data-key="↓" type="button">↓</button><button data-key="→" type="button">→</button><button data-key="Enter" type="button">↵ Enter</button></div>
+            <div class="key-preview"><span>PAGE PREVIEW</span><p id="typedPreview">Your text will appear here.</p></div>
+            <p class="micro-note">Demo mode shows text here only. A desktop companion is needed to type into other apps.</p>
+          </div>
+
+          <div class="mode-view" id="gesturesView">
+            <div class="gesture-list">
+              <div class="gesture-card"><span class="gesture-glyph">↕</span><div><b>Two-finger scroll</b><small>Move two fingers up or down</small></div><kbd>Scroll</kbd></div>
+              <div class="gesture-card"><span class="gesture-glyph">⇆</span><div><b>Two-finger swipe</b><small>Move left or right</small></div><kbd>Navigate</kbd></div>
+              <div class="gesture-card"><span class="gesture-glyph">●</span><div><b>Three-finger tap</b><small>Tap with three fingers</small></div><kbd>Show desktop</kbd></div>
+            </div>
+            <div class="gesture-preview"><span>GESTURE PREVIEW</span><strong id="gesturePreview">Try a gesture above</strong></div>
+            <p class="micro-note">Gestures are previews in this prototype. Desktop actions will require the companion.</p>
+          </div>
+        </section>
+
+        <section class="desktop-demo" aria-label="Desktop page demo">
+          <div class="desktop-top"><div class="window-dots"><i></i><i></i><i></i></div><div class="address">touchflow.local / demo</div><span class="live-indicator">LIVE PREVIEW</span></div>
+          <div class="desktop-content">
+            <div class="desktop-copy"><p class="eyebrow">A LITTLE MORE FREEDOM</p><h2>Move around.<br /><em>Stay connected.</em></h2><p>TouchFlow brings the controls you need to your hand, wherever you are in the room.</p><button id="demoAction" class="demo-action" type="button">Try a click <span>↗</span></button></div>
+            <div class="demo-orb orb-one"></div><div class="demo-orb orb-two"></div>
+            <div class="demo-cursor" id="desktopCursor"><span></span></div>
+          </div>
+          <div class="desktop-footer"><span><i class="green-dot"></i> In-page demo only</span><span>Desktop companion not connected</span></div>
+        </section>
+      </div>
+      <footer class="footer"><span>Designed for a trusted local connection</span><button id="privacyButton" type="button">Privacy & safety</button></footer>
+    </main>
+    <dialog id="infoDialog"><div class="dialog-head"><span class="brand-mark">↗</span><button id="closeDialog" aria-label="Close" type="button">×</button></div><p class="eyebrow" id="dialogEyebrow">PAIRING</p><h2 id="dialogTitle">Desktop companion coming next</h2><p id="dialogBody">Pairing will be enabled when the standalone desktop companion is ready. For now, try the in-page pointer, keyboard preview, and gesture panel.</p><button class="dialog-ok" id="dialogOk" type="button">Got it</button></dialog>
+    <script src="app.js"></script>
+  </body>
+</html>
